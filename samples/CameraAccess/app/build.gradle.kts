@@ -64,6 +64,11 @@ dependencies {
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.exifinterface)
+
+  implementation(platform("com.squareup.okhttp3:okhttp-bom:4.12.0"))
+  implementation("com.squareup.okhttp3:okhttp")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.material.icons.extended)

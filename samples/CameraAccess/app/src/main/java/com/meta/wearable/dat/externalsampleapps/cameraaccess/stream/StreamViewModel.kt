@@ -53,6 +53,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import com.skewbclimate.apptest.network.httpClient
+import com.skewbclimate.apptest.network.await
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONObject
+
 
 @SuppressLint("AutoCloseableUse")
 class StreamViewModel(
@@ -80,6 +88,9 @@ class StreamViewModel(
 
   // Presentation queue for buffering frames after color conversion
   private var presentationQueue: PresentationQueue? = null
+
+  public data class S3Response(val url: String, val key: String)
+  
 
   fun startStream() {
     videoJob?.cancel()
@@ -238,7 +249,7 @@ class StreamViewModel(
     _uiState.update { it.copy(isShareDialogVisible = false) }
   }
 
-  fun sharePhoto(bitmap: Bitmap) {
+  suspend fun uploadPhoto(bitmap: Bitmap) : String {
     val context = getApplication<Application>()
     val imagesFolder = File(context.cacheDir, "images")
     try {
@@ -257,10 +268,156 @@ class StreamViewModel(
 
       val chooser = Intent.createChooser(intent, "Share Image")
       chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-      context.startActivity(chooser)
+      //context.startActivity(chooser)
+
+      val uuid = "019df751-5dec-77f0-91df-934de367f154"
+
+      //Send UUID as part of request to S3 Lambda API, expect a signed URL response to upload image to.
+      Log.i("API Debugging", "Generating S3 URL")
+      var s3Response = generateS3Url(uuid);
+      if (s3Response.url == "" || s3Response.url == null) {
+        Log.e("API Debugging", "Failed to generate S3 URL, aborting")
+        return "Something went wrong when generating S3 URL. Please try again."
+      }
+      Log.i("API Debugging", "S3 URL: " + s3Response.url)
+      Log.i("API Debugging", "S3 URL key: " + s3Response.key)
+
+
+      //Upload image to signed S3 URL
+      Log.i("API Debugging", "Uploading image file to S3 bucket...")
+      val s3UploadSuccess = sendToS3(s3Response.url, file)
+      Log.i("API Debugging", "Checking for success: " + s3UploadSuccess)
+      if (s3UploadSuccess == false) {
+        Log.e("API Debugging", "Image upload to S3 failed, aborting")
+        return "Something went wrong when uploading to S3. Please try again."
+      }
+
+      //Send UUID and s3Response.key for file to Gemini Lambda API, expect string description of image as a response
+      Log.i("API Debugging", "Image uploaded to S3 successfully, querying Gemini for description...")
+      val geminiResponse = queryGemini(s3Response.key, uuid)
+      Log.i("API Debugging", "Gemini response: " + geminiResponse)
+
+      return geminiResponse
     } catch (e: IOException) {
-      Log.e("StreamViewModel", "Failed to share photo", e)
+      Log.e("API Debugging", "Failed to share photo", e)
+      return ""
     }
+  }
+
+  suspend fun generateS3Url(uuid: String): S3Response {
+    //Take UUID, build JSON object with "password", "extension" and content type
+      val jsonBody = JSONObject().apply {
+          put("password", uuid)
+          put("extension", "png")
+          put("contentType", "image/png")
+      }.toString()
+
+    //Send POST to S3 Lambda API with JSON body, expect signed URL in response
+    val request = Request.Builder()
+        .url("https://go8xx7xqf2.execute-api.eu-west-2.amazonaws.com/prod/skewb-climate-generate-signed-s3-put-url-test")
+        .post(jsonBody.toRequestBody("application/json".toMediaType()))
+        .build()
+
+    val response = httpClient.newCall(request).await()
+    if (!response.isSuccessful) {
+      throw IOException("Failed to generate S3 URL: ${response.code}")
+    }
+
+    //Parse json response into object containing uploadUrl and key
+    val body = response.body?.string()
+    if (body == null) {
+        throw IOException("Response body is null")
+    }
+
+    val json = JSONObject(body)
+
+    val url = json.getString("uploadUrl")
+    val key = json.getString("key")
+
+    val s3Response = S3Response(
+        url = url,
+        key = key
+    )
+
+    return s3Response
+  }
+
+  suspend fun sendToS3(s3Url: String, file: File) : Boolean {
+    //Upload file to S3 via a PUT call
+    val fileRequestBody = file.asRequestBody("image/png".toMediaType())
+    val request = Request.Builder().url(s3Url).put(fileRequestBody).build()
+
+    val uploadResponse = httpClient.newCall(request).await()
+
+    if (!uploadResponse.isSuccessful) {
+      throw IOException("Failed to upload image to S3: ${uploadResponse.code}")
+      return false
+    }
+
+    //if successful, return true
+    return true
+  }
+
+  suspend fun queryGemini(s3Path: String, uuid: String) : String {
+    val lambdaUrl = "https://go8xx7xqf2.execute-api.eu-west-2.amazonaws.com/prod/skewb-climate-gemini-test-lambda"
+
+    //Build JSON body with s3Path and UUID
+    val jsonBody = JSONObject().apply {
+        put("imagePath", s3Path)
+        put("password", uuid)
+        put("mimeType", "image/png")
+    }.toString()
+
+    Log.i("API Debugging", "Querying Gemini with body: " + jsonBody)
+
+    //Send json to Lambda as get
+    val request = Request.Builder()
+        .url(lambdaUrl)
+        .post(jsonBody.toRequestBody("application/json".toMediaType()))
+        .build()
+    Log.i("API Debugging", "Sending request to Gemini Lambda...")
+    val response = httpClient.newCall(request).await()
+    Log.i("API Debugging", "Received response from Gemini Lambda")
+    Log.i("API Debugging", "Response: " + response.toString())
+
+    //Check for successful response
+    Log.i("API Debugging", "Checking if response was valid...")
+    if (!response.isSuccessful) {
+      Log.e("API Debugging", "Gemini Lambda returned error: " + response.code)
+      throw IOException("Failed to query Gemini: ${response.code}")
+    }
+
+    //Take "description" field from JSON response and return as string
+    Log.i("API Debugging", "Extracting response from API result...")
+    val body = response.body?.string()
+    if (body == null) {
+        Log.i("API Debugging", "Response body is null")
+        throw IOException("Response body is null")
+    }
+    Log.i("API Debugging", "Parsing response to JSON...")
+    val json = JSONObject(body)
+    Log.i("API Debugging", "JSON: " + json)
+
+    Log.i("API Debugging", "Check to see if message value exists, signifying a time-out...")
+    if (!json.isNull("message")) {
+      Log.i("API Debugging", "Gemini call timed out.")
+      return "Gemini endpoint call timed out (60 seconds). Please try again."
+    }
+
+    Log.i("API Debugging", "Pull Gemini response from description value...")
+    if (json.isNull("description")) {
+      Log.i("API Debugging", "Unexpected missing 'description' field for Gemini Response, throwing error.")
+      return "Gemini endpoint did not return a valid response, please contact Lewis to investigate."
+    }
+    val geminiResponse = json.getString("description")
+    if (geminiResponse == null || geminiResponse.isEmpty()) {
+      Log.i("API Debugging", "Unexpected error occurred when accessing Gemini Response.")
+      return "No description returned, something has gone wrong. Check Gemini Lambda Logs."
+    }
+    Log.i("API Debugging", "Gemini Response: " + geminiResponse)
+
+    Log.i("API Debugging", "Returning Gemini Response...")
+    return geminiResponse
   }
 
   private fun handleVideoFrame(videoFrame: VideoFrame) {

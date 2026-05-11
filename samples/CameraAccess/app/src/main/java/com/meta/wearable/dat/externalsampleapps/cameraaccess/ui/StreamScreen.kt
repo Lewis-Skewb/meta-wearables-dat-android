@@ -13,6 +13,7 @@
 
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
@@ -29,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -41,6 +43,7 @@ import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.R
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamViewModel
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun StreamScreen(
@@ -106,14 +109,21 @@ fun StreamScreen(
     }
   }
 
+    val coroutineScope = rememberCoroutineScope()
+
   streamUiState.capturedPhoto?.let { photo ->
     if (streamUiState.isShareDialogVisible) {
       SharePhotoDialog(
           photo = photo,
           onDismiss = { streamViewModel.hideShareDialog() },
           onShare = { bitmap ->
-            streamViewModel.sharePhoto(bitmap)
-            streamViewModel.hideShareDialog()
+              coroutineScope.launch {
+                  Log.i("API Info", "Uploading image to S3...")
+                  val urlPath = streamViewModel.uploadPhoto(bitmap)
+                  Log.i("API Info", "URL Path: " + urlPath)
+                  Log.i("API Info", "Sending image to Gemini and awaiting response...")
+                  //streamViewModel.hideShareDialog()
+              }
           },
       )
     }

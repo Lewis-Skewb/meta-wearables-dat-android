@@ -50,7 +50,7 @@ fun SharePhotoDialog(photo: Bitmap, onDismiss: () -> Unit, onShare: (Bitmap) -> 
         )
 
         Button(onClick = { onShare(photo) }, modifier = Modifier.fillMaxWidth()) {
-          Text(stringResource(R.string.share))
+          Text("Send this picture to AI")
         }
       }
     }
