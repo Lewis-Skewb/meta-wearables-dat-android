@@ -22,4 +22,6 @@ data class StreamUiState(
     val capturedPhoto: Bitmap? = null,
     val isShareDialogVisible: Boolean = false,
     val isCapturing: Boolean = false,
+    val isUploading: Boolean = false,
+    val geminiResponse: String? = null,
 )

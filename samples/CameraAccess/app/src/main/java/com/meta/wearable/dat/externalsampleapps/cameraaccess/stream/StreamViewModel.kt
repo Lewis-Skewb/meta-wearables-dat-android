@@ -47,12 +47,14 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.skewbclimate.apptest.network.httpClient
@@ -246,61 +248,52 @@ class StreamViewModel(
   }
 
   fun hideShareDialog() {
-    _uiState.update { it.copy(isShareDialogVisible = false) }
+    _uiState.update { it.copy(isShareDialogVisible = false, geminiResponse = null) }
   }
 
   suspend fun uploadPhoto(bitmap: Bitmap) : String {
-    val context = getApplication<Application>()
-    val imagesFolder = File(context.cacheDir, "images")
-    try {
-      imagesFolder.mkdirs()
-      val file = File(imagesFolder, "shared_image.png")
-      FileOutputStream(file).use { stream ->
-        bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
+    _uiState.update { it.copy(isUploading = true, geminiResponse = null) }
+    return try {
+      val geminiResponse = withContext(Dispatchers.IO) {
+        val context = getApplication<Application>()
+        val imagesFolder = File(context.cacheDir, "images")
+        imagesFolder.mkdirs()
+        val file = File(imagesFolder, "shared_image.png")
+        FileOutputStream(file).use { stream ->
+          bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
+        }
+
+        val uuid = "019df751-5dec-77f0-91df-934de367f154"
+
+        //Send UUID as part of request to S3 Lambda API, expect a signed URL response to upload image to.
+        Log.i("API Debugging", "Generating S3 URL")
+        val s3Response = generateS3Url(uuid)
+        if (s3Response.url.isEmpty()) {
+          throw IOException("Failed to generate S3 URL")
+        }
+        Log.i("API Debugging", "S3 URL: " + s3Response.url)
+        Log.i("API Debugging", "S3 URL key: " + s3Response.key)
+
+        //Upload image to signed S3 URL
+        Log.i("API Debugging", "Uploading image file to S3 bucket...")
+        val s3UploadSuccess = sendToS3(s3Response.url, file)
+        Log.i("API Debugging", "Checking for success: " + s3UploadSuccess)
+        if (!s3UploadSuccess) {
+          throw IOException("Image upload to S3 failed")
+        }
+
+        //Send UUID and s3Response.key for file to Gemini Lambda API, expect string description of image as a response
+        Log.i("API Debugging", "Image uploaded to S3 successfully, querying Gemini for description...")
+        queryGemini(s3Response.key, uuid)
       }
-
-      val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-      val intent = Intent(Intent.ACTION_SEND)
-      intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-      intent.putExtra(Intent.EXTRA_STREAM, uri)
-      intent.type = "image/png"
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-
-      val chooser = Intent.createChooser(intent, "Share Image")
-      chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-      //context.startActivity(chooser)
-
-      val uuid = "019df751-5dec-77f0-91df-934de367f154"
-
-      //Send UUID as part of request to S3 Lambda API, expect a signed URL response to upload image to.
-      Log.i("API Debugging", "Generating S3 URL")
-      var s3Response = generateS3Url(uuid);
-      if (s3Response.url == "" || s3Response.url == null) {
-        Log.e("API Debugging", "Failed to generate S3 URL, aborting")
-        return "Something went wrong when generating S3 URL. Please try again."
-      }
-      Log.i("API Debugging", "S3 URL: " + s3Response.url)
-      Log.i("API Debugging", "S3 URL key: " + s3Response.key)
-
-
-      //Upload image to signed S3 URL
-      Log.i("API Debugging", "Uploading image file to S3 bucket...")
-      val s3UploadSuccess = sendToS3(s3Response.url, file)
-      Log.i("API Debugging", "Checking for success: " + s3UploadSuccess)
-      if (s3UploadSuccess == false) {
-        Log.e("API Debugging", "Image upload to S3 failed, aborting")
-        return "Something went wrong when uploading to S3. Please try again."
-      }
-
-      //Send UUID and s3Response.key for file to Gemini Lambda API, expect string description of image as a response
-      Log.i("API Debugging", "Image uploaded to S3 successfully, querying Gemini for description...")
-      val geminiResponse = queryGemini(s3Response.key, uuid)
       Log.i("API Debugging", "Gemini response: " + geminiResponse)
-
-      return geminiResponse
-    } catch (e: IOException) {
+      _uiState.update { it.copy(isUploading = false, geminiResponse = geminiResponse) }
+      geminiResponse
+    } catch (e: Exception) {
       Log.e("API Debugging", "Failed to share photo", e)
-      return ""
+      val errorMsg = if (e is IOException) e.message ?: "Network error" else "Something went wrong. Please try again."
+      _uiState.update { it.copy(isUploading = false, geminiResponse = errorMsg) }
+      ""
     }
   }
 
@@ -351,7 +344,6 @@ class StreamViewModel(
 
     if (!uploadResponse.isSuccessful) {
       throw IOException("Failed to upload image to S3: ${uploadResponse.code}")
-      return false
     }
 
     //if successful, return true
@@ -384,7 +376,10 @@ class StreamViewModel(
     Log.i("API Debugging", "Checking if response was valid...")
     if (!response.isSuccessful) {
       Log.e("API Debugging", "Gemini Lambda returned error: " + response.code)
-      throw IOException("Failed to query Gemini: ${response.code}")
+      if (response.code == 504) {
+        throw IOException("Call timed out, please try again...")
+      }
+      throw IOException("Something went wrong while querying Gemini, please try again and if the issue persists, contact Lewis.")
     }
 
     //Take "description" field from JSON response and return as string

@@ -115,14 +115,12 @@ fun StreamScreen(
     if (streamUiState.isShareDialogVisible) {
       SharePhotoDialog(
           photo = photo,
+          isUploading = streamUiState.isUploading,
+          geminiResponse = streamUiState.geminiResponse,
           onDismiss = { streamViewModel.hideShareDialog() },
           onShare = { bitmap ->
               coroutineScope.launch {
-                  Log.i("API Info", "Uploading image to S3...")
-                  val urlPath = streamViewModel.uploadPhoto(bitmap)
-                  Log.i("API Info", "URL Path: " + urlPath)
-                  Log.i("API Info", "Sending image to Gemini and awaiting response...")
-                  //streamViewModel.hideShareDialog()
+                  streamViewModel.uploadPhoto(bitmap)
               }
           },
       )
