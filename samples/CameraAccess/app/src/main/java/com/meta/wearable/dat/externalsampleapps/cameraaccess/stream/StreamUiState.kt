@@ -24,4 +24,5 @@ data class StreamUiState(
     val isCapturing: Boolean = false,
     val isUploading: Boolean = false,
     val geminiResponse: String? = null,
+    val lastS3Key: String? = null,
 )

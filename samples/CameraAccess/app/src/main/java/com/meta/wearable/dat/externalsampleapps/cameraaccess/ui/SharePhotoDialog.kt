@@ -43,7 +43,8 @@ fun SharePhotoDialog(
     isUploading: Boolean,
     geminiResponse: String?,
     onDismiss: () -> Unit,
-    onShare: (Bitmap) -> Unit
+    onShare: (Bitmap) -> Unit,
+    onRetry: () -> Unit
 ) {
   Dialog(onDismissRequest = onDismiss) {
     Card(
@@ -72,9 +73,10 @@ fun SharePhotoDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(48.dp))
-                Text("AI is analysing...")
+                Text("AI is analyzing...")
             }
         } else if (geminiResponse != null) {
+            val isError = geminiResponse.startsWith("Error:")
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -83,17 +85,28 @@ fun SharePhotoDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "AI Response:",
+                    text = if (isError) "Analysis Failed" else "AI Response:",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = geminiResponse,
+                    text = if (isError) geminiResponse.removePrefix("Error:").trim() else geminiResponse,
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Close")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Close")
+                }
+                if (isError) {
+                    Button(onClick = onRetry, modifier = Modifier.weight(1f)) {
+                        Text("Retry")
+                    }
+                }
             }
         } else {
             Button(

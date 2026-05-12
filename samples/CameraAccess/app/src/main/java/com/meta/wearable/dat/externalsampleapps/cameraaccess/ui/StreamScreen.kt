@@ -123,6 +123,11 @@ fun StreamScreen(
                   streamViewModel.uploadPhoto(bitmap)
               }
           },
+          onRetry = {
+              coroutineScope.launch {
+                  streamViewModel.retryGemini()
+              }
+          }
       )
     }
   }

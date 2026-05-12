@@ -248,11 +248,11 @@ class StreamViewModel(
   }
 
   fun hideShareDialog() {
-    _uiState.update { it.copy(isShareDialogVisible = false, geminiResponse = null) }
+    _uiState.update { it.copy(isShareDialogVisible = false, geminiResponse = null, lastS3Key = null) }
   }
 
   suspend fun uploadPhoto(bitmap: Bitmap) : String {
-    _uiState.update { it.copy(isUploading = true, geminiResponse = null) }
+    _uiState.update { it.copy(isUploading = true, geminiResponse = null, lastS3Key = null) }
     return try {
       val geminiResponse = withContext(Dispatchers.IO) {
         val context = getApplication<Application>()
@@ -271,6 +271,9 @@ class StreamViewModel(
         if (s3Response.url.isEmpty()) {
           throw IOException("Failed to generate S3 URL")
         }
+        
+        _uiState.update { it.copy(lastS3Key = s3Response.key) }
+        
         Log.i("API Debugging", "S3 URL: " + s3Response.url)
         Log.i("API Debugging", "S3 URL key: " + s3Response.key)
 
@@ -292,8 +295,26 @@ class StreamViewModel(
     } catch (e: Exception) {
       Log.e("API Debugging", "Failed to share photo", e)
       val errorMsg = if (e is IOException) e.message ?: "Network error" else "Something went wrong. Please try again."
-      _uiState.update { it.copy(isUploading = false, geminiResponse = errorMsg) }
+      _uiState.update { it.copy(isUploading = false, geminiResponse = "Error: $errorMsg") }
       ""
+    }
+  }
+
+  suspend fun retryGemini() {
+    val s3Key = _uiState.value.lastS3Key ?: return
+    val uuid = "019df751-5dec-77f0-91df-934de367f154"
+    
+    _uiState.update { it.copy(isUploading = true, geminiResponse = null) }
+    
+    try {
+      val description = withContext(Dispatchers.IO) {
+        queryGemini(s3Key, uuid)
+      }
+      _uiState.update { it.copy(isUploading = false, geminiResponse = description) }
+    } catch (e: Exception) {
+      Log.e("API Debugging", "Failed to retry Gemini", e)
+      val errorMsg = if (e is IOException) e.message ?: "Network error" else "Something went wrong. Please try again."
+      _uiState.update { it.copy(isUploading = false, geminiResponse = "Error: $errorMsg") }
     }
   }
 
