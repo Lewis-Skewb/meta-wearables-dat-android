@@ -248,10 +248,14 @@ class StreamViewModel(
   }
 
   fun hideShareDialog() {
-    _uiState.update { it.copy(isShareDialogVisible = false, geminiResponse = null, lastS3Key = null) }
+    _uiState.update { it.copy(isShareDialogVisible = false, geminiResponse = null, lastS3Key = null, userQuery = "") }
   }
 
-  suspend fun uploadPhoto(bitmap: Bitmap) : String {
+  fun setUserQuery(query: String) {
+    _uiState.update { it.copy(userQuery = query) }
+  }
+
+  suspend fun uploadPhoto(bitmap: Bitmap, query: String) : String {
     _uiState.update { it.copy(isUploading = true, geminiResponse = null, lastS3Key = null) }
     return try {
       val geminiResponse = withContext(Dispatchers.IO) {
@@ -264,6 +268,8 @@ class StreamViewModel(
         }
 
         val uuid = "019df751-5dec-77f0-91df-934de367f154"
+
+        Log.i("API Debugging", "Received custom query: " + query)
 
         //Send UUID as part of request to S3 Lambda API, expect a signed URL response to upload image to.
         Log.i("API Debugging", "Generating S3 URL")
@@ -287,7 +293,7 @@ class StreamViewModel(
 
         //Send UUID and s3Response.key for file to Gemini Lambda API, expect string description of image as a response
         Log.i("API Debugging", "Image uploaded to S3 successfully, querying Gemini for description...")
-        queryGemini(s3Response.key, uuid)
+        queryGemini(s3Response.key, uuid, query)
       }
       Log.i("API Debugging", "Gemini response: " + geminiResponse)
       _uiState.update { it.copy(isUploading = false, geminiResponse = geminiResponse) }
@@ -302,13 +308,14 @@ class StreamViewModel(
 
   suspend fun retryGemini() {
     val s3Key = _uiState.value.lastS3Key ?: return
+    val query = _uiState.value.userQuery
     val uuid = "019df751-5dec-77f0-91df-934de367f154"
     
     _uiState.update { it.copy(isUploading = true, geminiResponse = null) }
     
     try {
       val description = withContext(Dispatchers.IO) {
-        queryGemini(s3Key, uuid)
+        queryGemini(s3Key, uuid, query)
       }
       _uiState.update { it.copy(isUploading = false, geminiResponse = description) }
     } catch (e: Exception) {
@@ -371,7 +378,7 @@ class StreamViewModel(
     return true
   }
 
-  suspend fun queryGemini(s3Path: String, uuid: String) : String {
+  suspend fun queryGemini(s3Path: String, uuid: String, query: String) : String {
     val lambdaUrl = "https://go8xx7xqf2.execute-api.eu-west-2.amazonaws.com/prod/skewb-climate-gemini-test-lambda"
 
     //Build JSON body with s3Path and UUID
@@ -379,6 +386,10 @@ class StreamViewModel(
         put("imagePath", s3Path)
         put("password", uuid)
         put("mimeType", "image/png")
+        if (query != "")
+        {
+          put("query", query)
+        }
     }.toString()
 
     Log.i("API Debugging", "Querying Gemini with body: " + jsonBody)

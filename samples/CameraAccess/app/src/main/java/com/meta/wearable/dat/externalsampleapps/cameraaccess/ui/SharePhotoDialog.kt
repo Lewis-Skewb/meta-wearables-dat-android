@@ -26,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -42,8 +43,10 @@ fun SharePhotoDialog(
     photo: Bitmap,
     isUploading: Boolean,
     geminiResponse: String?,
+    userQuery: String,
+    onUserQueryChange: (String) -> Unit,
     onDismiss: () -> Unit,
-    onShare: (Bitmap) -> Unit,
+    onShare: (Bitmap, String) -> Unit,
     onRetry: () -> Unit
 ) {
   Dialog(onDismissRequest = onDismiss) {
@@ -73,7 +76,7 @@ fun SharePhotoDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(48.dp))
-                Text("AI is analyzing...")
+                Text("Roadie is having a look...")
             }
         } else if (geminiResponse != null) {
             val isError = geminiResponse.startsWith("Error:")
@@ -109,11 +112,24 @@ fun SharePhotoDialog(
                 }
             }
         } else {
-            Button(
-                onClick = { onShare(photo) },
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Send this picture to AI")
+                val buttonText = if (userQuery.isEmpty()) "Analyse with Roadie" else "Ask Roadie"
+                Button(
+                    onClick = { onShare(photo, userQuery) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(buttonText)
+                }
+
+                OutlinedTextField(
+                    value = userQuery,
+                    onValueChange = onUserQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("OPTIONAL: Ask a question about this image...") }
+                )
             }
         }
       }

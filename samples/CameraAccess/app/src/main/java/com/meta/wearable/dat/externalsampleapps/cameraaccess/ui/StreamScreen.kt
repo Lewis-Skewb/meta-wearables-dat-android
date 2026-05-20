@@ -117,10 +117,12 @@ fun StreamScreen(
           photo = photo,
           isUploading = streamUiState.isUploading,
           geminiResponse = streamUiState.geminiResponse,
+          userQuery = streamUiState.userQuery,
+          onUserQueryChange = { streamViewModel.setUserQuery(it) },
           onDismiss = { streamViewModel.hideShareDialog() },
-          onShare = { bitmap ->
+          onShare = { bitmap, query ->
               coroutineScope.launch {
-                  streamViewModel.uploadPhoto(bitmap)
+                  streamViewModel.uploadPhoto(bitmap, query)
               }
           },
           onRetry = {
